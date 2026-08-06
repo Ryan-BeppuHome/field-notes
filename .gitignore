@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Never commit secrets or local config — these guides discuss credential files,
+# so keep the real ones well away from this repo.
+*.env
+.env*
+client_secret*.json
+credentials/
+*_token.json
+*.pem
+*.key
