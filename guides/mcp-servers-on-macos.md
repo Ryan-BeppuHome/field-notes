@@ -424,6 +424,31 @@ npm install -g mcp-remote@0.1.37
 > script. `0.1.37` is the version this guide is written against; a later one will work, but
 > change it deliberately and expect to log in again once.
 
+> 🪲 **Field note (2026-08-15): 0.1.37 saves its logins in the 0.1.36 folder.** The npm
+> package published as `mcp-remote@0.1.37` has the version string `0.1.36` embedded in its
+> bundled code (`dist/chunk-F76MHFRJ.js`), so at runtime it writes to
+> `~/.mcp-auth/mcp-remote-0.1.36/` — **not** the `0.1.37` folder the version-named-folder
+> rule above predicts. When checking saved logins, look in the `0.1.36` folder. Verify on
+> your own Mac: `grep -ao '0\.1\.3[0-9]' /opt/homebrew/lib/node_modules/mcp-remote/dist/*.js`
+
+Discovered while debugging repeated MoneyForward login screens. Two failure modes live in
+these folders:
+
+- **A failed or abandoned OAuth flow** leaves `client_info…`/`code_verifier…`/`lock.json`
+  artifacts with no `tokens.json`. The bridge's `mcp-remote` child then loops
+  "Please authorize" — opening the browser automatically on **every** client connect.
+- **A stale `lock.json`** (holding a dead PID) blocks token sharing between copies.
+
+The fix for both:
+
+1. Delete that service's hash-prefixed files from **both**
+   `~/.mcp-auth/mcp-remote-0.1.36/` **and** `~/.mcp-auth/mcp-remote-0.1.37/` — with the
+   version mismatch you can't trust which folder is live, and stale artifacts in either
+   can bite
+2. Restart the bridge: `launchctl kickstart -k gui/$(id -u)/local.SERVICE-mcp-bridge`
+3. Use any tool from that service once and complete the vendor login in the browser —
+   from then on the bridge holds it as normal
+
 **Step 2 — create the bridge.** Replace `SERVICE`, `PORT`, `REMOTE_URL` and `YOURNAME`.
 
 First check the port is free and the pieces exist — this takes five seconds and saves a
