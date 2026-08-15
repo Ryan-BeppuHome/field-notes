@@ -579,7 +579,7 @@ Replace `local.workspace-mcp` below with whatever `Label` you used.
 | **(Part E)** Bridge starts but calls fail | Version combination — `mcp-proxy` accepts a range of `mcp` versions and can resolve a bad pair | Pin `mcp==1.9.4` with `mcp-proxy==0.9.0` |
 | **(Part E)** `404` from the bridge | You used `/mcp` | These bridges serve `/sse`. Health-check on `/status` |
 | **(Part E)** Worked yesterday, "permission denied" today | Possibly a cached copy that isn't executable — check first: `ls -l ~/.npm/_npx/*/node_modules/mcp-remote/dist/proxy.js` | If it lacks `x`, install globally and point at the fixed path instead of `npx` |
-| **(Part E)** Logged out of every remote service at once | `mcp-remote` version changed, so it's reading a new, empty login folder | Check which `~/.mcp-auth/mcp-remote-*` folders exist; pin the version you authorised against |
+| **(Part E)** Logged out of every remote service at once | `mcp-remote` version changed, so it's reading a new, empty login folder | Check which `~/.mcp-auth/mcp-remote-*` folders exist; pin the version you authorised against. Note the folder can lag the installed version — `0.1.37` writes to `0.1.36/` (see the field note in Part E, Step 1) |
 
 **Health check, any time:**
 
@@ -635,7 +635,7 @@ exactly that and are better suited than anything here.
 | Claude's connection | `~/.claude.json` → `mcpServers` → `workspace-mcp` |
 | **(Part E)** Other-service bridges | `~/Library/LaunchAgents/local.<service>-mcp-bridge.plist` (whatever you named them) |
 | **(Part E)** Their logs | `/tmp/<service>-mcp-bridge.err.log` **and** `.out.log` — check both; startup problems often land in `.out.log` |
-| **(Part E)** Saved logins for remote services | `~/.mcp-auth/mcp-remote-<version>/` — note the version in the folder name; that's why pinning matters |
+| **(Part E)** Saved logins for remote services | `~/.mcp-auth/mcp-remote-<version>/` — note the version in the folder name; that's why pinning matters. Caveat: the name comes from the version *embedded in the bundle*, which can lag the published one — `0.1.37` writes to `mcp-remote-0.1.36/` (see the field note in Part E, Step 1) |
 
 ### Security notes for whoever runs this
 
