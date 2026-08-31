@@ -12,6 +12,7 @@ was verified rather than assumed.
 | Guide | What it covers |
 |---|---|
 | [MCP servers on macOS](guides/mcp-servers-on-macos.md) | Connecting an AI assistant to Google Workspace (Gmail, Drive, Docs, Calendar…) for several accounts at once, and the same pattern for any other hosted MCP server. Fixes the "why am I logging in again?" problem. |
+| [Apple N1 Wi-Fi degradation](guides/apple-n1-wifi-degradation-macos.md) | M5-era Macs where Wi-Fi goes unusably slow until you reboot, while Ethernet and every other machine on the same access point are fine. How to confirm it's the driver and not your network, how to recover in ~25 s by restarting the driver processes instead of rebooting, and how to automate that safely. Includes the full elimination trail and a self-healing daemon that made things worse. |
 
 ## How these are written
 
