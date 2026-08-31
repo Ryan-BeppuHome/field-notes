@@ -1,17 +1,29 @@
-# Apple N1 Wi-Fi: "connected but unusably slow", and how to fix it without rebooting
+# Apple N1 Wi-Fi: unusably slow after switching networks, and how to fix it without rebooting
 
-On M5-era Macs — the first with Apple's in-house **N1** Wi-Fi chip — Wi-Fi degrades over time until
-you reboot. This note shows how to confirm it's this fault and not your network, how to recover in
-about 25 seconds instead of rebooting, and how to make that automatic.
+On M5-era Macs — the first with Apple's in-house **N1** Wi-Fi chip — Wi-Fi breaks when you leave a
+network and come back to it. This note shows how to confirm it's this fault and not your network,
+how to recover in about 25 seconds instead of rebooting, and how to make that automatic.
 
 Apple has shipped no fix as of macOS 26.6.2. This is **recovery, not a cure.**
 
 ---
 
+## The trigger — and it reproduces on demand
+
+This is the part that makes the fault identifiable, so start here:
+
+1. Be on a Wi-Fi network that works.
+2. Leave it — connect to something else, typically a phone's Personal Hotspot.
+3. Reconnect to the first network.
+
+**It breaks every time.** This is not a gradual decline you notice after a few days; it is a
+reproducible consequence of the network transition. You can trigger it deliberately in two minutes,
+which makes it far easier to test fixes against than most Wi-Fi faults.
+
 ## Is this your problem?
 
-The signature is unusual, and it is worth checking carefully, because it looks exactly like a broken
-router and isn't one.
+The signature is unusual, and worth checking carefully, because it looks exactly like a broken router
+and isn't one.
 
 - A tiny HTTPS request takes **1.2–25 seconds**. TCP connects fast (0.1–0.5 s), then the transfer stalls.
 - **Ethernet on the same Mac is perfect** — about 0.07 s.
@@ -20,12 +32,8 @@ router and isn't one.
 - It is pure latency *variance*: minimum ping 3 ms, maximum 500–750 ms.
 - **A reboot cures it. Cycling the Wi-Fi radio does not.**
 
-That last asymmetry is the diagnostic tell. A radio or antenna fault does not come good for hours
-after a restart and then decay again — but driver state does.
-
-Onset is associated with switching networks: tethering to a phone, then rejoining Wi-Fi later.
-Frequency increases with uptime. In one measured case: four failures in a day, a reboot, five clean
-days, then five failures on day six.
+That last asymmetry is the diagnostic tell. A radio or antenna fault does not come good after a
+restart and then break again on the next network change — but driver state does.
 
 ### Confirm it in one command
 
@@ -36,8 +44,8 @@ log show --last 10m --predicate 'process == "airportd"' \
   | grep -oE "channel = [0-9]+ BW = [0-9]+ band = [0-9]+" | sort -u
 ```
 
-**One line = healthy. Four = wedged.** A healthy association sits on a single channel at a single
-width. A wedged one thrashes between band/width combinations.
+**One line = healthy. Four = broken.** A healthy association sits on a single channel at a single
+width. A broken one thrashes between band/width combinations.
 
 And measure the actual damage:
 
@@ -47,7 +55,7 @@ for i in 1 2 3 4 5; do
 done
 ```
 
-Healthy is ~0.08 s. Wedged is 1.2–25 s. There is no ambiguous middle — the gap is roughly 150×,
+Healthy is ~0.08 s. Broken is 1.2–25 s. There is no ambiguous middle — the gap is roughly 150×,
 which matters later when we set an automatic threshold.
 
 > **A marker that does *not* work:** the downlink rate collapsing to `rxRate=6.0Mbps` in the airportd
@@ -83,8 +91,11 @@ That matters enormously. Old kernel extensions could not be reloaded without a r
 ordinary userspace processes — **kill them and launchd respawns them with clean state.** That is a
 genuine driver restart, and it is what a reboot was doing for you all along.
 
-(For the record: `AppleCentauriManager` reports version `1.0.0d1` — a first-revision driver. "Centauri"
-is Apple's internal name for the N1 silicon.)
+The driver evidently carries state across the network transition that it should not. Restarting it
+discards that state, which is why it works and why a radio power cycle doesn't.
+
+(For the record: `AppleCentauriManager` reports version `1.0.0d1` — a first-revision driver.
+"Centauri" is Apple's internal name for the N1 silicon.)
 
 ---
 
@@ -109,7 +120,7 @@ The cheaper remedies were tried first, against the same live failure, in order:
 
 | Attempt | Median fetch after |
 |---|---|
-| baseline (wedged) | 15.82 s |
+| baseline (broken) | 15.82 s |
 | `sudo ifconfig awdl0 down` — AirDrop/Handoff off-channel hopping | 12.07 s |
 | restart `airportd` alone | 14.01 s |
 | Wi-Fi radio off/on | 14.84 s |
@@ -151,18 +162,19 @@ macOS reinstall) and [256315041](https://discussions.apple.com/thread/256315041)
 
 ## Making it automatic
 
-Manual recovery is fine, but if the failure reliably follows a network change, automate it.
+Because the trigger is a network change, the recovery can key on exactly that event — no polling
+required.
 
 **`/usr/local/bin/wifi-autoheal.sh`** — root-owned, `chmod 755`:
 
 ```bash
 #!/bin/bash
 # Fires on NETWORK CHANGE (never a timer). Verifies, then restarts the N1 Wi-Fi
-# driver only if genuinely wedged.
+# driver only if genuinely broken.
 LOG=/var/log/wifi-autoheal.log
 STAMP=/var/run/wifi-autoheal.last
 COOLDOWN=600     # at most one heal per 10 min
-BAD=1.5          # median secs above this = wedged (healthy ~0.08s)
+BAD=1.5          # median secs above this = broken (healthy ~0.08s)
 T0=$(date +%s)
 say(){ echo "$(date '+%F %H:%M:%S') [+$(( $(date +%s) - T0 ))s] $*" >> "$LOG"; }
 
@@ -186,14 +198,14 @@ bad(){ awk -v m="$1" -v b="$BAD" 'BEGIN{exit !(m+0>b+0)}'; }
 M=$(median)
 bad "$M" || exit 0                                          # healthy: silent, no action
 
-say "WEDGED on $(ipconfig getifaddr en0): median ${M}s - restarting Wi-Fi driver"
+say "BROKEN on $(ipconfig getifaddr en0): median ${M}s - restarting Wi-Fi driver"
 touch "$STAMP"
 pkill -9 -f AppleCentauri; pkill -9 -x centaurid; pkill -9 -x airportd
 wait_for_drivers 15
 networksetup -setairportpower en0 on >/dev/null 2>&1
 wait_for_ip 15
 A=$(median)
-if bad "$A"; then say "STILL WEDGED after driver restart (${A}s) - reboot may be needed"
+if bad "$A"; then say "STILL BROKEN after driver restart (${A}s) - reboot may be needed"
 else say "CURED: ${M}s -> ${A}s"; fi
 ```
 
@@ -216,6 +228,9 @@ else say "CURED: ${M}s -> ${A}s"; fi
 </dict>
 </plist>
 ```
+
+The `WatchPaths` entries are the point: both files are rewritten by macOS on a network change, so the
+daemon runs precisely when the fault is created, and at no other time.
 
 Install:
 
@@ -250,7 +265,8 @@ own. Those log lines then misdirected the investigation for an hour.
 
 The rules that make the version above safe are worth stealing for any self-healing job:
 
-- **Event-triggered, never polled.** Tie it to the thing that actually changes.
+- **Event-triggered, never polled.** Tie it to the thing that actually changes. If you can name the
+  event that causes your fault, watch that, not the clock.
 - **A threshold with a large margin.** 1.5 s against a healthy 0.08 s. If your healthy and unhealthy
   states aren't separated by an order of magnitude, you don't yet have a signal worth automating on.
 - **One proven, non-destructive action.** Never touch DHCP, VPNs or network service configuration.
@@ -267,5 +283,6 @@ Tested on macOS 26.5.2 and 26.6.x, on an M5 MacBook Air, against a tri-band Wi-F
 is in Apple's driver, not in any particular router — it was reproduced on a phone hotspot too.
 
 The underlying defect is unfixed. If you hit this, report it at
-<https://www.apple.com/feedback/macos.html>. A before/after measurement plus a control machine on the
-same access point is far stronger evidence than the existing public reports contain.
+<https://www.apple.com/feedback/macos.html>. A reproducible trigger, a before/after measurement and a
+control machine on the same access point together make far stronger evidence than the existing public
+reports contain.
