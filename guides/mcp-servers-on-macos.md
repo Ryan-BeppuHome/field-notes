@@ -281,7 +281,7 @@ You want: a line from `launchctl`, a `Python … 127.0.0.1:8000 (LISTEN)` line, 
 Register the bridge (not the server itself):
 
 ```bash
-claude mcp add --scope user workspace-mcp -- /opt/homebrew/opt/node@20/bin/npx -y mcp-remote@latest http://127.0.0.1:8000/mcp --allow-http --transport http-only
+claude mcp add --scope user workspace-mcp -- /opt/homebrew/opt/node@20/bin/node /opt/homebrew/bin/mcp-remote http://127.0.0.1:8000/mcp --allow-http --transport http-only
 ```
 
 If the `claude` command isn't available, add it by hand instead — in `~/.claude.json`,
@@ -289,14 +289,24 @@ under `"mcpServers"`:
 
 ```json
 "workspace-mcp": {
-  "command": "/opt/homebrew/opt/node@20/bin/npx",
-  "args": ["-y", "mcp-remote@latest", "http://127.0.0.1:8000/mcp", "--allow-http", "--transport", "http-only"],
+  "command": "/opt/homebrew/opt/node@20/bin/node",
+  "args": ["/opt/homebrew/bin/mcp-remote", "http://127.0.0.1:8000/mcp", "--allow-http", "--transport", "http-only"],
   "env": { "PATH": "/opt/homebrew/opt/node@20/bin:/usr/local/bin:/usr/bin:/bin" }
 }
 ```
 
 For the Claude **desktop app**, the same block goes in
 `~/Library/Application Support/Claude/claude_desktop_config.json`.
+
+> ⚠️ **Install `mcp-remote` globally first** (`npm install -g mcp-remote@0.1.37`) — earlier
+> versions of this guide used `npx -y mcp-remote@latest` here, which contradicts Part E and
+> causes the very problem Part E exists to fix. Corrected 2026-08-26.
+
+> ⛔ **Edit that file only while Claude Desktop is QUIT.** The app rewrites the whole file —
+> `mcpServers` included — from the copy it read **at launch**, every time any preference
+> changes. An edit made while it is running is silently reverted, and a long-running app
+> reverts the same fix again and again: proven here on 2026-08-24, where an app open since
+> 08-22 ate two consecutive fixes and made it look as though nothing had been done.
 
 **Then fully quit and reopen Claude** (⌘Q, not just closing the window).
 
@@ -424,7 +434,7 @@ npm install -g mcp-remote@0.1.37
 > script. `0.1.37` is the version this guide is written against; a later one will work, but
 > change it deliberately and expect to log in again once.
 
-> 🪲 **Field note (2026-08-15): 0.1.37 saves its logins in the 0.1.36 folder.** The npm
+> 🪲 **Field note (2026-08-15, re-confirmed 2026-08-30): 0.1.37 saves its logins in the 0.1.36 folder.** The npm
 > package published as `mcp-remote@0.1.37` has the version string `0.1.36` embedded in its
 > bundled code (`dist/chunk-F76MHFRJ.js`), so at runtime it writes to
 > `~/.mcp-auth/mcp-remote-0.1.36/` — **not** the `0.1.37` folder the version-named-folder
@@ -456,7 +466,7 @@ confusing failure later:
 
 ```bash
 lsof -nP -iTCP:PORT -sTCP:LISTEN || echo "port free ✅"
-ls ~/.local/bin/uvx /opt/homebrew/opt/node@20/bin/node /opt/homebrew/bin/mcp-remote
+ls ~/.venvs/mcp-proxy/bin/mcp-proxy /opt/homebrew/opt/node@20/bin/node /opt/homebrew/bin/mcp-remote
 ```
 
 All three must exist. Then write the file — this refuses to clobber an existing bridge:
@@ -472,10 +482,7 @@ P=~/Library/LaunchAgents/local.SERVICE-mcp-bridge.plist
 	<string>local.SERVICE-mcp-bridge</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/YOURNAME/.local/bin/uvx</string>
-		<string>--with</string>
-		<string>mcp==1.9.4</string>
-		<string>mcp-proxy==0.9.0</string>
+		<string>/Users/YOURNAME/.venvs/mcp-proxy/bin/mcp-proxy</string>
 		<string>--port</string>
 		<string>PORT</string>
 		<string>--pass-environment</string>
@@ -509,10 +516,20 @@ launchctl print gui/$(id -u)/local.SERVICE-mcp-bridge | grep -E "state|pid"
 the label is already loaded, `bootstrap` fails — use
 `launchctl kickstart -k gui/$(id -u)/local.SERVICE-mcp-bridge` to restart instead.
 
-**Why the pinned versions:** `mcp-proxy==0.9.0` with `mcp==1.9.4` is the combination proven
-to work. `mcp-proxy` accepts a *range* of `mcp` versions rather than a specific one, so an
-unpinned install can silently resolve to a combination that fails — which is how this was
-originally discovered. Pin both, and change them deliberately.
+**Why a venv, and which versions.** Create it once:
+
+```bash
+python3 -m venv ~/.venvs/mcp-proxy
+~/.venvs/mcp-proxy/bin/pip install "mcp-proxy==0.12.0" "mcp>=1.17,<2"
+```
+
+> 🪲 **Corrected 2026-08-22 — this guide previously recommended `mcp-proxy==0.9.0` with
+> `mcp==1.9.4`, and that pairing is bad.** Measured here: 0.9.0 dropped roughly **one in
+> two** sequential clients — the second app to connect got *"Couldn't start this server …
+> not ready after 60 seconds"*, which reads like a broken vendor and isn't. 0.12.0 passed
+> 5/5, including abrupt client kills. If you built a bridge from the older instructions,
+> rebuild it on 0.12.0. `mcp-proxy` accepts a *range* of `mcp` versions, so pin both —
+> an unpinned install can still resolve to a failing pair.
 
 **Why `--pass-environment`:** `mcp-proxy` starts its child with an empty environment by
 default; this hands the child the environment above. The template calls Node by absolute
@@ -549,6 +566,50 @@ You will still be asked again occasionally — if the vendor revokes access or e
 session, if you change `mcp-remote` versions, or if the saved-login folder is cleared. The
 bridge removes the self-inflicted cause, not every possible one.
 
+### ⛔ Once a service has a bridge, NOTHING may call the vendor directly
+
+This is the rule that makes the bridge work, and it is easy to half-do. Every app, every
+agent, every config on the Mac must point at the local port. One straggler still pointing at
+the vendor URL re-creates the whole problem, because it does its own login.
+
+Why it bites so hard: `mcp-remote` keeps saved logins in a folder named after its **own
+version**. Different apps pull in different versions over time, and each new version starts
+from an **empty** folder — so that client opens a browser on **every single launch**. On this
+Mac ten such folders had accumulated (`0.1.36` … `0.2.5`) and Notion asked for a login six
+times in one morning. The tokens existed; they were just in two folders out of ten.
+
+Count yours:
+
+```bash
+for d in ~/.mcp-auth/mcp-remote-*/; do
+  echo "$(basename $d): $(ls $d*_tokens.json 2>/dev/null | wc -l | tr -d ' ') saved logins"
+done
+```
+
+More than two or three folders means something on the Mac is pulling unpinned versions.
+Empty folders are safe to delete; folders holding logins are not.
+
+**Make the rule enforce itself.** If your config gets rewritten by an app (see the Claude
+Desktop warning in Part B4), a hand-fix won't survive. Keep a small script that rewrites any
+direct vendor URL into the bridge address and run it on a schedule — otherwise you will fix
+this more than once.
+
+### Keep the login alive: a single-flight refresher
+
+`mcp-remote` has no lock around token refresh
+([modelcontextprotocol/typescript-sdk#1760](https://github.com/modelcontextprotocol/typescript-sdk/issues/1760),
+open at time of writing). With a bridge there is only one holder, so the race is gone — but
+a token that expires while nothing is running still ends in a browser prompt. A small agent
+that refreshes each bridge's token the minute it expires turns "log in again" into a
+non-event. Worth it once you have more than one bridge.
+
+### A wrapper script hides `npx` from any config check
+
+If a config entry points at a shell script of your own, the entry can look perfectly clean
+while the script runs `npx -y <package>` inside it. Four wrappers here were doing exactly
+that — one on `@latest` — and no config audit could see them. Whatever you use to check for
+this, make it read the contents of any script named as a server's command.
+
 ### Notes worth knowing
 
 - **One bridge per service, one port each.** They don't share.
@@ -576,7 +637,9 @@ Replace `local.workspace-mcp` below with whatever `Label` you used.
 | Second account returns the first account's data | You're running two server copies, or the request didn't name an account | One server only (Part C). Check `USER_GOOGLE_EMAIL` isn't silently defaulting every request |
 | Command not found / weird unrelated errors on install | You ran `uvx workspace-cli` — an unrelated package | The correct name is `workspace-mcp` |
 | **(Part E)** A bridged service still asks you to log in repeatedly | Likeliest: an app still points at the vendor URL instead of the bridge, re-creating the race | Compare every app's config — URL, executable and version must match. If all agree, the cause is at the vendor's end instead |
-| **(Part E)** Bridge starts but calls fail | Version combination — `mcp-proxy` accepts a range of `mcp` versions and can resolve a bad pair | Pin `mcp==1.9.4` with `mcp-proxy==0.9.0` |
+| **(Part E)** Bridge starts, then roughly every second app that connects fails with "not ready after 60 seconds" | `mcp-proxy` 0.9.0 drops alternating clients (measured 1-in-2 here) | Rebuild the venv on `mcp-proxy==0.12.0` with `mcp>=1.17,<2` |
+| **(Part E)** A service asks for a browser login on every launch | That client is on an `mcp-remote` version whose login folder is empty — or it still points at the vendor instead of the bridge | Count the folders (see Part E), point every client at the bridge, pin the version |
+| A config fix reverts by itself within hours | Claude Desktop rewrites its config from the copy it read at launch | Quit the app, then edit; re-apply automatically if it keeps happening |
 | **(Part E)** `404` from the bridge | You used `/mcp` | These bridges serve `/sse`. Health-check on `/status` |
 | **(Part E)** Worked yesterday, "permission denied" today | Possibly a cached copy that isn't executable — check first: `ls -l ~/.npm/_npx/*/node_modules/mcp-remote/dist/proxy.js` | If it lacks `x`, install globally and point at the fixed path instead of `npx` |
 | **(Part E)** Logged out of every remote service at once | `mcp-remote` version changed, so it's reading a new, empty login folder | Check which `~/.mcp-auth/mcp-remote-*` folders exist; pin the version you authorised against. Note the folder can lag the installed version — `0.1.37` writes to `0.1.36/` (see the field note in Part E, Step 1) |
